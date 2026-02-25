@@ -2,49 +2,40 @@ import type WebSocket from "ws";
 import type { ClientToServer, ServerToClient } from "../types/shared.js";
 import { makeCode } from "../utils/ids.js";
 import { wsSend } from "../utils/wsSend.js";
-
-type RoomLite = {
-  code: string;
-  host?: WebSocket;
-};
+import { QuizRoom } from "./QuizRoom.js";
 
 export class RoomsManager {
-  private rooms = new Map<string, RoomLite>();
-  private wsToRoom = new Map<WebSocket, string>(); 
+  private rooms = new Map<string, QuizRoom>();
+  private wsToRoom = new Map<WebSocket, string>();
 
   handle(ws: WebSocket, msg: ClientToServer) {
-    // Host crée une room
     if (msg.type === "join" && msg.role === "host") {
       const code = makeCode((c) => this.rooms.has(c));
-      this.rooms.set(code, { code, host: ws });
+      const room = new QuizRoom(code, msg.quiz, () => this.deleteIfEmpty(code));
+      this.rooms.set(code, room);
+
       this.wsToRoom.set(ws, code);
-
-      console.log(`[rooms] created room ${code}`);
-
-      wsSend(ws, { type: "joined", role: "host", quizCode: code } satisfies ServerToClient);
+      room.joinHost(ws);
       return;
     }
 
-    // Player rejoint une room existante
     if (msg.type === "join" && msg.role === "player") {
       const room = this.rooms.get(msg.quizCode);
       if (!room) return wsSend(ws, { type: "error", message: "Code invalide" } satisfies ServerToClient);
 
       this.wsToRoom.set(ws, room.code);
-
-      console.log(`[rooms] player joined room ${room.code} name=${msg.name}`);
-
-
-      wsSend(ws, {
-        type: "joined",
-        role: "player",
-        quizCode: room.code,
-        playerId: "TEMP_PLAYER_ID",
-        name: msg.name
-      } satisfies ServerToClient);
+      room.joinPlayer(ws, msg.name, msg.playerId);
       return;
     }
-    wsSend(ws, { type: "error", message: "Not implemented (yet)" } satisfies ServerToClient);
+
+    const codeFromWs = this.wsToRoom.get(ws);
+    const code = codeFromWs ?? ("quizCode" in msg ? msg.quizCode : undefined);
+    if (!code) return wsSend(ws, { type: "error", message: "Missing quizCode" } satisfies ServerToClient);
+
+    const room = this.rooms.get(code);
+    if (!room) return wsSend(ws, { type: "error", message: "Room introuvable" } satisfies ServerToClient);
+
+    room.onMessage(ws, msg);
   }
 
   onClose(ws: WebSocket) {
@@ -56,9 +47,15 @@ export class RoomsManager {
     const room = this.rooms.get(code);
     if (!room) return;
 
-    // Si le host part, on delete
-    if (room.host === ws) {
-      console.log(`[rooms] host left, deleting room ${code}`);
+    room.onClose(ws);
+    this.deleteIfEmpty(code);
+  }
+
+  private deleteIfEmpty(code: string) {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    if (room.isEmpty()) {
+      console.log(`[rooms] deleting empty room ${code}`);
       this.rooms.delete(code);
     }
   }
