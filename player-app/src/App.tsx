@@ -40,6 +40,9 @@ type AppState = {
   rankings: Ranking[];
 
   error: string | null;
+
+  // ✅ pour détecter “nouvelle question”
+  lastQuestionId: number | null;
 };
 
 const initialState: AppState = {
@@ -62,6 +65,8 @@ const initialState: AppState = {
   rankings: [],
 
   error: null,
+
+  lastQuestionId: null,
 };
 
 export default function App() {
@@ -69,7 +74,6 @@ export default function App() {
   const { status, sendMessage, lastMessage } = useWebSocket(wsUrl);
 
   const [state, setState] = useState<AppState>(initialState);
-
 
   function handleJoin(quizCode: string, name: string) {
     setState((s) => ({
@@ -87,7 +91,6 @@ export default function App() {
       name,
     } as any);
   }
-
 
   function handleAnswer(choiceIndex: number) {
     setState((s) => {
@@ -116,20 +119,20 @@ export default function App() {
     });
   }
 
- 
   useEffect(() => {
     if (!lastMessage) return;
 
     const msg = lastMessage as unknown as ServerToClient;
 
     setState((s) => {
-      if (msg.type === "joined" && msg.role === "player") {
+      if (msg.type === "joined" && (msg as any).role === "player") {
+        const m = msg as any;
         return {
           ...s,
           phase: "lobby",
-          quizCode: msg.quizCode,
-          playerId: msg.playerId,
-          name: msg.name,
+          quizCode: m.quizCode,
+          playerId: m.playerId,
+          name: m.name,
           error: null,
         };
       }
@@ -162,7 +165,17 @@ export default function App() {
         const correctIndex =
           st.phase === "results" && st.results ? st.results.correctIndex : null;
 
-        const shouldResetAnswered = st.phase !== "question";
+        // ✅ reset seulement si on est en QUESTION et que l’id change
+        const newQuestionId =
+          st.phase === "question" && st.question ? st.question.id : null;
+
+        const isNewQuestion =
+          st.phase === "question" &&
+          newQuestionId !== null &&
+          newQuestionId !== s.lastQuestionId;
+
+        // ✅ cas où on revient en lobby/ended => on clean
+        const shouldFullReset = st.phase === "lobby" || st.phase === "ended";
 
         return {
           ...s,
@@ -172,14 +185,18 @@ export default function App() {
           remaining,
           correctIndex,
           rankings,
-          hasAnswered: shouldResetAnswered ? false : s.hasAnswered,
-          selectedIndex: shouldResetAnswered ? null : s.selectedIndex,
           error: null,
+
+          // garder la réponse pendant RESULTS / LEADERBOARD
+          hasAnswered: shouldFullReset ? false : isNewQuestion ? false : s.hasAnswered,
+          selectedIndex: shouldFullReset ? null : isNewQuestion ? null : s.selectedIndex,
+
+          lastQuestionId: newQuestionId ?? s.lastQuestionId,
         };
       }
 
       if (msg.type === "error") {
-        return { ...s, error: msg.message };
+        return { ...s, error: (msg as any).message };
       }
 
       return s;
