@@ -112,8 +112,9 @@ export class QuizRoom {
         return this.next();
 
       case "answer":
-        return wsSend(ws, { type: "error", message: "Not implemented (yet)" } satisfies ServerToClient);
-
+        if (msg.quizCode !== this.code) return;
+        if (ctx.role !== "player") return;
+        return this.handleAnswer(msg.playerId, msg.questionId, msg.choiceIndex);
       default:
         return;
     }
@@ -261,7 +262,35 @@ export class QuizRoom {
     this.sendState(ws);
     this.broadcastState();
   }
+private handleAnswer(playerId: string, questionId: number, choiceIndex: 0 | 1 | 2 | 3) {
+  if (this.phase !== "question") return;
 
+  const q = this.currentQuestion();
+  if (!q) return;
+  if (q.id !== questionId) return;
+
+  // anti double réponse (j'avais oublié ce cas oupsi :D) 
+  if (this.answers.has(playerId)) return;
+
+  const player = this.players.get(playerId);
+  if (!player) return;
+
+  this.answers.set(playerId, choiceIndex);
+
+  // scoring ( avec la rapidité)
+  const now = nowMs();
+  const remaining = Math.max(0, this.questionEndsAt - now);
+
+  if (choiceIndex === q.correctIndex) {
+    const base = 1000;
+    const bonus = Math.floor((remaining / q.durationMs) * 1000);
+    player.score += base + bonus;
+  }
+
+  console.log(`[room ${this.code}] answer player=${playerId} choice=${choiceIndex}`);
+
+  this.broadcastState();
+}
 
   private currentQuestion(): QuizQuestion | null {
     if (this.currentIndex < 0 || this.currentIndex >= this.quiz.questions.length) return null;
