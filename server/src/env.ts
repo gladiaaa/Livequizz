@@ -1,1 +1,1 @@
-export const PORT = Number(process.env.PORT ?? 8080);
+export const PORT = Number(process.env.PORT ?? 3001);
