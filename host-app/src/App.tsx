@@ -29,7 +29,6 @@ function mapPhase(p: RoomState["phase"]): UiPhase {
 }
 
 export default function App() {
-  // ✅ BON PORT
   const { sendMessage, lastMessage, isOpen } = useWebSocket("ws://localhost:3001");
 
   const [room, setRoom] = useState<RoomState | null>(null);
@@ -78,6 +77,12 @@ export default function App() {
     sendMessage({ type: "host:next", quizCode });
   };
 
+  // ✅ AJOUT : “Terminer”
+  const handleEnd = () => {
+    if (!isOpen || !quizCode) return;
+    sendMessage({ type: "host:end", quizCode });
+  };
+
   // --- Render ---
   if (uiPhase === "CREATE") {
     return <CreateQuiz onCreate={handleCreate} />;
@@ -98,7 +103,8 @@ export default function App() {
   }
 
   if (uiPhase === "RESULTS") {
-    return <Results results={room?.results} onNext={handleNext} onEnd={() => {}} />;
+    // ✅ FIX ICI : on passe handleEnd au lieu de () => {}
+    return <Results results={room?.results} onNext={handleNext} onEnd={handleEnd} />;
   }
 
   // LEADERBOARD / ENDED

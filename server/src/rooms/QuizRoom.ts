@@ -28,7 +28,6 @@ export class QuizRoom {
 
   private questionEndsAt = 0;
 
-
   private tickInterval: NodeJS.Timeout | null = null;
   private timeUpTimeout: NodeJS.Timeout | null = null;
 
@@ -60,6 +59,7 @@ export class QuizRoom {
       this.broadcastState();
       return;
     }
+
     const existing = [...this.players.values()].find((p) => p.name === name);
     if (existing) {
       existing.connected = true;
@@ -80,7 +80,6 @@ export class QuizRoom {
       return;
     }
 
-
     const id = makePlayerId();
     this.players.set(id, { id, name, score: 0, connected: true });
     this.sockets.set(ws, { role: "player", playerId: id });
@@ -90,7 +89,6 @@ export class QuizRoom {
     wsSend(ws, { type: "joined", role: "player", quizCode: this.code, playerId: id, name } satisfies ServerToClient);
     this.broadcastState();
   }
-
 
   onMessage(ws: WebSocket, msg: ClientToServer) {
     const ctx = this.sockets.get(ws);
@@ -111,15 +109,20 @@ export class QuizRoom {
         if (msg.quizCode !== this.code) return;
         return this.next();
 
+      case "host:end": // ✅ AJOUT
+        if (ctx.role !== "host") return;
+        if (msg.quizCode !== this.code) return;
+        return this.end();
+
       case "answer":
         if (msg.quizCode !== this.code) return;
         if (ctx.role !== "player") return;
         return this.handleAnswer(msg.playerId, msg.questionId, msg.choiceIndex);
+
       default:
         return;
     }
   }
-
 
   onClose(ws: WebSocket) {
     const ctx = this.sockets.get(ws);
@@ -130,7 +133,6 @@ export class QuizRoom {
     if (ctx.role === "host") {
       console.log(`[room ${this.code}] host left`);
       this.host = null;
-
 
       if (this.sockets.size === 0) this.stopTimer();
 
@@ -155,7 +157,6 @@ export class QuizRoom {
   isEmpty() {
     return this.host === null && this.sockets.size === 0;
   }
-
 
   private start() {
     if (this.phase !== "lobby") return;
@@ -183,9 +184,9 @@ export class QuizRoom {
     this.broadcastState();
   }
 
-
   private next() {
     if (this.phase !== "results") return;
+
     const nextIndex = this.currentIndex + 1;
 
     if (nextIndex < this.quiz.questions.length) {
@@ -208,7 +209,6 @@ export class QuizRoom {
       return;
     }
 
-
     this.stopTimer();
     this.phase = "leaderboard";
 
@@ -217,13 +217,21 @@ export class QuizRoom {
     this.broadcastState();
   }
 
+  // ✅ AJOUT
+  private end() {
+    this.stopTimer();
+    this.phase = "leaderboard";
+
+    console.log(`[room ${this.code}] host end -> leaderboard`);
+
+    this.broadcastState();
+  }
 
   private startTimer(q: QuizQuestion) {
     this.stopTimer();
 
     const start = nowMs();
     this.questionEndsAt = start + q.durationMs;
-
 
     this.tickInterval = setInterval(() => {
       this.broadcastState();
@@ -252,7 +260,6 @@ export class QuizRoom {
     this.broadcastState();
   }
 
-
   private handleSync(ws: WebSocket, playerId: string) {
     const p = this.players.get(playerId);
     if (p) p.connected = true;
@@ -262,35 +269,36 @@ export class QuizRoom {
     this.sendState(ws);
     this.broadcastState();
   }
-private handleAnswer(playerId: string, questionId: number, choiceIndex: 0 | 1 | 2 | 3) {
-  if (this.phase !== "question") return;
 
-  const q = this.currentQuestion();
-  if (!q) return;
-  if (q.id !== questionId) return;
+  private handleAnswer(playerId: string, questionId: number, choiceIndex: 0 | 1 | 2 | 3) {
+    if (this.phase !== "question") return;
 
-  // anti double réponse (j'avais oublié ce cas oupsi :D) 
-  if (this.answers.has(playerId)) return;
+    const q = this.currentQuestion();
+    if (!q) return;
+    if (q.id !== questionId) return;
 
-  const player = this.players.get(playerId);
-  if (!player) return;
+    // anti double réponse
+    if (this.answers.has(playerId)) return;
 
-  this.answers.set(playerId, choiceIndex);
+    const player = this.players.get(playerId);
+    if (!player) return;
 
-  // scoring ( avec la rapidité)
-  const now = nowMs();
-  const remaining = Math.max(0, this.questionEndsAt - now);
+    this.answers.set(playerId, choiceIndex);
 
-  if (choiceIndex === q.correctIndex) {
-    const base = 1000;
-    const bonus = Math.floor((remaining / q.durationMs) * 1000);
-    player.score += base + bonus;
+    // scoring (avec la rapidité)
+    const now = nowMs();
+    const remaining = Math.max(0, this.questionEndsAt - now);
+
+    if (choiceIndex === q.correctIndex) {
+      const base = 1000;
+      const bonus = Math.floor((remaining / q.durationMs) * 1000);
+      player.score += base + bonus;
+    }
+
+    console.log(`[room ${this.code}] answer player=${playerId} choice=${choiceIndex}`);
+
+    this.broadcastState();
   }
-
-  console.log(`[room ${this.code}] answer player=${playerId} choice=${choiceIndex}`);
-
-  this.broadcastState();
-}
 
   private currentQuestion(): QuizQuestion | null {
     if (this.currentIndex < 0 || this.currentIndex >= this.quiz.questions.length) return null;

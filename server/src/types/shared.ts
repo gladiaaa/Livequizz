@@ -1,5 +1,3 @@
-// Types partagés "localement" (server only)
-
 export type QuizPhase = "lobby" | "question" | "results" | "leaderboard" | "ended";
 
 export type QuizQuestion = {
@@ -55,7 +53,8 @@ export type ClientToServer =
   | { type: "sync"; quizCode: string; playerId: string }
   | { type: "answer"; quizCode: string; playerId: string; questionId: number; choiceIndex: 0 | 1 | 2 | 3 }
   | { type: "host:start"; quizCode: string }
-  | { type: "host:next"; quizCode: string };
+  | { type: "host:next"; quizCode: string }
+  | { type: "host:end"; quizCode: string };
 
 export type ServerToClient =
   | { type: "state"; state: RoomState }
@@ -68,28 +67,31 @@ function isObject(x: unknown): x is Record<string, unknown> {
 }
 
 export function isClientToServer(x: unknown): x is ClientToServer {
-  if (!isObject(x) || typeof x.type !== "string") return false;
+  if (!isObject(x) || typeof (x as any).type !== "string") return false;
 
-  switch (x.type) {
+  const msg = x as any;
+
+  switch (msg.type) {
     case "join":
-      if (x.role === "host") return isObject(x.quiz);
-      if (x.role === "player") return typeof x.quizCode === "string" && typeof x.name === "string";
+      if (msg.role === "host") return isObject(msg.quiz);
+      if (msg.role === "player") return typeof msg.quizCode === "string" && typeof msg.name === "string";
       return false;
 
     case "sync":
-      return typeof x.quizCode === "string" && typeof x.playerId === "string";
+      return typeof msg.quizCode === "string" && typeof msg.playerId === "string";
 
     case "answer":
       return (
-        typeof x.quizCode === "string" &&
-        typeof x.playerId === "string" &&
-        typeof x.questionId === "number" &&
-        (x.choiceIndex === 0 || x.choiceIndex === 1 || x.choiceIndex === 2 || x.choiceIndex === 3)
+        typeof msg.quizCode === "string" &&
+        typeof msg.playerId === "string" &&
+        typeof msg.questionId === "number" &&
+        (msg.choiceIndex === 0 || msg.choiceIndex === 1 || msg.choiceIndex === 2 || msg.choiceIndex === 3)
       );
 
     case "host:start":
     case "host:next":
-      return typeof x.quizCode === "string";
+    case "host:end": 
+      return typeof msg.quizCode === "string";
 
     default:
       return false;
