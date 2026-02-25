@@ -1,22 +1,26 @@
-interface Props {
-  results: unknown;
-  onNext: () => void;
-  onEnd: () => void;
+interface Results {
+  counts: [number, number, number, number];
+  correctIndex: 0 | 1 | 2 | 3;
 }
 
-export default function Results({ results, onNext, onEnd }: Props) {
+interface Props {
+  results: Results;
+  onNext: () => void;
+}
+
+export default function Results({ results, onNext }: Props) {
   return (
-    <div className="card">
+    <div>
       <h2>Résultats</h2>
-      <pre>{JSON.stringify(results)}</pre>
 
-      <button className="btn" onClick={onNext}>
-        Question suivante
-      </button>
+      {results.counts.map((count, index) => (
+        <div key={index}>
+          Réponse {index + 1}: {count} votes
+          {index === results.correctIndex && " ✅"}
+        </div>
+      ))}
 
-      <button className="btn" onClick={onEnd}>
-        Terminer
-      </button>
+      <button onClick={onNext}>Question suivante</button>
     </div>
   );
 }
