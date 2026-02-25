@@ -30,7 +30,7 @@ function mapPhase(p: RoomState["phase"]): UiPhase {
 
 export default function App() {
   // ✅ BON PORT
-  const { sendMessage, lastMessage, isOpen } = useWebSocket("ws://localhost:8080");
+  const { sendMessage, lastMessage, isOpen } = useWebSocket("ws://localhost:3001");
 
   const [room, setRoom] = useState<RoomState | null>(null);
   const [quizCode, setQuizCode] = useState<string>("");
