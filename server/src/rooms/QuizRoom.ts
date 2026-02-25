@@ -21,20 +21,22 @@ export class QuizRoom {
   private players = new Map<string, Player>();
   private sockets = new Map<WebSocket, { role: "host" | "player"; playerId?: string }>();
 
-  // State
   private phase: RoomState["phase"] = "lobby";
   private currentIndex = -1;
 
-  // /!\ Pour plus tard
   private answers = new Map<string, 0 | 1 | 2 | 3>();
+
   private questionEndsAt = 0;
+
+
+  private tickInterval: NodeJS.Timeout | null = null;
+  private timeUpTimeout: NodeJS.Timeout | null = null;
 
   constructor(code: string, quiz: QuizDefinition, private onMaybeDelete: () => void) {
     this.code = code;
     this.quiz = quiz;
   }
 
-  // Join Host
   joinHost(ws: WebSocket) {
     this.host = ws;
     this.sockets.set(ws, { role: "host" });
@@ -45,9 +47,7 @@ export class QuizRoom {
     this.broadcastState();
   }
 
-  // Join player
   joinPlayer(ws: WebSocket, name: string, playerId?: string) {
-
     if (playerId && this.players.has(playerId)) {
       const p = this.players.get(playerId)!;
       p.connected = true;
@@ -60,8 +60,6 @@ export class QuizRoom {
       this.broadcastState();
       return;
     }
-
-    // si même name, rattacher
     const existing = [...this.players.values()].find((p) => p.name === name);
     if (existing) {
       existing.connected = true;
@@ -82,7 +80,7 @@ export class QuizRoom {
       return;
     }
 
-    // new player
+
     const id = makePlayerId();
     this.players.set(id, { id, name, score: 0, connected: true });
     this.sockets.set(ws, { role: "player", playerId: id });
@@ -93,6 +91,7 @@ export class QuizRoom {
     this.broadcastState();
   }
 
+
   onMessage(ws: WebSocket, msg: ClientToServer) {
     const ctx = this.sockets.get(ws);
     if (!ctx) return wsSend(ws, { type: "error", message: "Not joined" } satisfies ServerToClient);
@@ -101,8 +100,17 @@ export class QuizRoom {
       case "sync":
         if (msg.quizCode !== this.code) return;
         return this.handleSync(ws, msg.playerId);
+
       case "host:start":
+        if (ctx.role !== "host") return;
+        if (msg.quizCode !== this.code) return;
+        return this.start();
+
       case "host:next":
+        if (ctx.role !== "host") return;
+        if (msg.quizCode !== this.code) return;
+        return this.next();
+
       case "answer":
         return wsSend(ws, { type: "error", message: "Not implemented (yet)" } satisfies ServerToClient);
 
@@ -111,7 +119,7 @@ export class QuizRoom {
     }
   }
 
-  //  Close
+
   onClose(ws: WebSocket) {
     const ctx = this.sockets.get(ws);
     if (!ctx) return;
@@ -121,6 +129,10 @@ export class QuizRoom {
     if (ctx.role === "host") {
       console.log(`[room ${this.code}] host left`);
       this.host = null;
+
+
+      if (this.sockets.size === 0) this.stopTimer();
+
       this.broadcastState();
       this.onMaybeDelete();
       return;
@@ -132,6 +144,8 @@ export class QuizRoom {
 
       console.log(`[room ${this.code}] player left id=${ctx.playerId}`);
 
+      if (this.sockets.size === 0) this.stopTimer();
+
       this.broadcastState();
       this.onMaybeDelete();
     }
@@ -141,7 +155,103 @@ export class QuizRoom {
     return this.host === null && this.sockets.size === 0;
   }
 
-  //  Sync
+
+  private start() {
+    if (this.phase !== "lobby") return;
+
+    if (this.quiz.questions.length === 0) {
+      this.phase = "ended";
+      this.broadcastState();
+      return;
+    }
+
+    this.currentIndex = 0;
+    this.phase = "question";
+    this.answers.clear();
+
+    const q = this.currentQuestion();
+    if (!q) {
+      this.phase = "ended";
+      this.broadcastState();
+      return;
+    }
+
+    console.log(`[room ${this.code}] start -> question index=${this.currentIndex}`);
+
+    this.startTimer(q);
+    this.broadcastState();
+  }
+
+
+  private next() {
+    if (this.phase !== "results") return;
+    const nextIndex = this.currentIndex + 1;
+
+    if (nextIndex < this.quiz.questions.length) {
+      this.currentIndex = nextIndex;
+      this.phase = "question";
+      this.answers.clear();
+
+      const q = this.currentQuestion();
+      if (!q) {
+        this.phase = "leaderboard";
+        this.stopTimer();
+        this.broadcastState();
+        return;
+      }
+
+      console.log(`[room ${this.code}] next -> question index=${this.currentIndex}`);
+
+      this.startTimer(q);
+      this.broadcastState();
+      return;
+    }
+
+
+    this.stopTimer();
+    this.phase = "leaderboard";
+
+    console.log(`[room ${this.code}] end -> leaderboard`);
+
+    this.broadcastState();
+  }
+
+
+  private startTimer(q: QuizQuestion) {
+    this.stopTimer();
+
+    const start = nowMs();
+    this.questionEndsAt = start + q.durationMs;
+
+
+    this.tickInterval = setInterval(() => {
+      this.broadcastState();
+    }, 1000);
+
+    this.timeUpTimeout = setTimeout(() => {
+      this.timeUp();
+    }, q.durationMs);
+  }
+
+  private stopTimer() {
+    if (this.tickInterval) clearInterval(this.tickInterval);
+    if (this.timeUpTimeout) clearTimeout(this.timeUpTimeout);
+    this.tickInterval = null;
+    this.timeUpTimeout = null;
+  }
+
+  private timeUp() {
+    if (this.phase !== "question") return;
+
+    this.stopTimer();
+    this.phase = "results";
+
+    console.log(`[room ${this.code}] time up -> results`);
+
+    this.broadcastState();
+  }
+
+
   private handleSync(ws: WebSocket, playerId: string) {
     const p = this.players.get(playerId);
     if (p) p.connected = true;
@@ -152,10 +262,16 @@ export class QuizRoom {
     this.broadcastState();
   }
 
-  // Snapshot
+
   private currentQuestion(): QuizQuestion | null {
     if (this.currentIndex < 0 || this.currentIndex >= this.quiz.questions.length) return null;
     return this.quiz.questions[this.currentIndex] ?? null;
+  }
+
+  private countsForResults(): [number, number, number, number] {
+    const counts: [number, number, number, number] = [0, 0, 0, 0];
+    for (const v of this.answers.values()) counts[v] += 1;
+    return counts;
   }
 
   private snapshot(): RoomState {
@@ -180,11 +296,14 @@ export class QuizRoom {
       question:
         this.phase === "question" || this.phase === "results"
           ? q
-            ? { id: q.id, title: q.title, choices: q.choices, endsAt: this.questionEndsAt || nowMs() }
+            ? { id: q.id, title: q.title, choices: q.choices, endsAt: this.questionEndsAt }
             : null
           : null,
 
-      results: null, 
+      results:
+        this.phase === "results" && q
+          ? { counts: this.countsForResults(), correctIndex: q.correctIndex }
+          : null,
 
       players: playersPublic,
       leaderboard
